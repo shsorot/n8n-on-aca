@@ -30,5 +30,4 @@ module n8n 'n8n-on-aca-storage.bicep' = {
 output AZURE_LOCATION string = location
 output AZURE_CONTAINER_APP_NAME string = n8n.outputs.containerAppName
 output AZURE_CONTAINER_APP_ENVIRONMENT string = n8n.outputs.environmentName
-output AZURE_STORAGE_ACCOUNT string = n8n.outputs.standardStorageAccount
 output CONTAINER_APP_URL string = n8n.outputs.containerAppFqdn

@@ -27,32 +27,6 @@ var postgresDatabaseName = 'n8ndb'
 var encryptionKey = uniqueString(resourceGroup().id, 'n8n-encryption-key')
 var basicAuthPassword = uniqueString(resourceGroup().id, 'n8n-basic-auth-pass')
 
-// Storage: keep for workflows/configs (optional)
-var stdStorageAccountName = 'n8nstorage${suffix}'
-var stdFileShareName = 'n8nshare${suffix}'
-var n8nStorageName = 'n8ndata${suffix}'
-
-// Create Standard storage account for optional file storage
-resource stdSa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: stdStorageAccountName
-  location: location
-  sku: { name: 'Standard_LRS' }
-  kind: 'StorageV2'
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    supportsHttpsTrafficOnly: true
-  }
-}
-
-// Create file share for optional configuration storage
-resource stdShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
-  name: '${stdSa.name}/default/${stdFileShareName}'
-  properties: {
-    shareQuota: 5120
-  }
-}
-
 // PostgreSQL Flexible Server
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: postgresServerName
@@ -82,6 +56,8 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-pr
     }
   }
 }
+// Derive FQDN instead of using any-typed properties
+var postgresHost = '${postgresServer.name}.postgres.database.azure.com'
 
 // PostgreSQL Database
 resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
@@ -122,26 +98,9 @@ resource existingEnv 'Microsoft.App/managedEnvironments@2024-03-01' existing = i
   name: envName
 }
 
-// Safe domain resolution to avoid BCP318
-var newEnvDomain = createNewEnvironment ? env.properties.defaultDomain : ''
-var existingEnvDomain = !createNewEnvironment ? existingEnv.properties.defaultDomain : ''
-var environmentDomain = createNewEnvironment ? newEnvDomain : existingEnvDomain
 var environmentName = envName
-
-// Optional environment storage
-var stdStorageAccountKey = stdSa.listKeys().keys[0].value
-
-resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
-  name: '${environmentName}/${n8nStorageName}'
-  properties: {
-    azureFile: {
-      accountName: stdStorageAccountName
-      shareName: stdFileShareName
-      accessMode: 'ReadWrite'
-      accountKey: stdStorageAccountKey
-    }
-  }
-}
+var environmentDomain = createNewEnvironment ? env.properties.defaultDomain : existingEnv.properties.defaultDomain
+var fqdnBase = '${appName}.${environmentDomain}'
 
 // Container App using Consumption profile with PostgreSQL
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
@@ -163,14 +122,13 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'n8n'
           image: image
           env: [
-            // Database configuration
             {
               name: 'DB_TYPE'
               value: 'postgresdb'
             }
             {
               name: 'DB_POSTGRESDB_HOST'
-              value: postgresServer.properties.fullyQualifiedDomainName
+              value: postgresHost
             }
             {
               name: 'DB_POSTGRESDB_PORT'
@@ -192,10 +150,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'DB_POSTGRESDB_SCHEMA'
               value: 'n8n'
             }
-            // n8n configuration
             {
               name: 'N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS'
-              value: 'false'  // Disable file permission enforcement for PostgreSQL
+              value: 'false'
             }
             {
               name: 'N8N_ENCRYPTION_KEY'
@@ -207,7 +164,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'WEBHOOK_URL'
-              value: 'https://${appName}.${environmentDomain}'
+              value: 'https://${fqdnBase}'
             }
             {
               name: 'TRUST_PROXY'
@@ -230,29 +187,15 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: 2
             memory: '4Gi'
           }
-          volumeMounts: [
-            {
-              volumeName: 'n8n-data'
-              mountPath: '/home/node/.n8n'
-            }
-          ]
         }
       ]
       scale: {
         minReplicas: 1
         maxReplicas: 1
       }
-      volumes: [
-        {
-          name: 'n8n-data'
-          storageType: 'AzureFile'
-          storageName: n8nStorageName
-        }
-      ]
     }
   }
   dependsOn: [
-    envStorage
     postgresDatabase
     postgresFirewallRule
   ]
@@ -260,9 +203,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 output environmentName string = environmentName
 output containerAppName string = app.name
-output containerAppFqdn string = 'https://${appName}.${environmentDomain}'
-output containerAppRawFqdn string = '${appName}.${environmentDomain}'
-output standardStorageAccount string = stdSa.name
+output containerAppFqdn string = 'https://${fqdnBase}'
+output containerAppRawFqdn string = fqdnBase
 output postgresServerName string = postgresServer.name
 output postgresDatabaseName string = postgresDatabaseName
 @secure()
