@@ -1,0 +1,790 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.37.4.10188",
+      "templateHash": "8419209761601308972"
+    }
+  },
+  "parameters": {
+    "environmentName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "metadata": {
+        "description": "Name used as prefix for all resources"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "centralus",
+      "metadata": {
+        "description": "Primary location for all resources"
+      }
+    },
+    "deploymentTier": {
+      "type": "string",
+      "defaultValue": "Try",
+      "allowedValues": [
+        "Try",
+        "Small",
+        "Production"
+      ],
+      "metadata": {
+        "description": "Deployment tier: Try | Small | Production"
+      }
+    },
+    "acaEnvironmentName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "(Try tier only) existing ACA environment name; blank = create new one"
+      }
+    },
+    "image": {
+      "type": "string",
+      "defaultValue": "docker.n8n.io/n8nio/n8n",
+      "metadata": {
+        "description": "n8n Docker image"
+      }
+    },
+    "postgresAdminPassword": {
+      "type": "securestring",
+      "defaultValue": "[replace(newGuid(), '-', '')]"
+    }
+  },
+  "variables": {
+    "isTry": "[equals(parameters('deploymentTier'), 'Try')]",
+    "isProd": "[equals(parameters('deploymentTier'), 'Production')]",
+    "createNewEnvironment": "[and(variables('isTry'), empty(parameters('acaEnvironmentName')))]",
+    "baseName": "[toLower(replace(parameters('environmentName'), '_', '-'))]",
+    "envNameSp": "[format('env-{0}', variables('baseName'))]",
+    "vnetName": "[format('vnet-{0}', variables('baseName'))]",
+    "storageHash": "[toLower(uniqueString(resourceGroup().id, variables('baseName')))]",
+    "cleanedBase": "[replace(variables('baseName'), '-', '')]",
+    "storageAccountRaw": "[format('{0}{1}', variables('cleanedBase'), variables('storageHash'))]",
+    "storageAccountName": "[if(greater(length(variables('storageAccountRaw')), 24), substring(variables('storageAccountRaw'), 0, 24), variables('storageAccountRaw'))]",
+    "fileShareName": "n8ndata",
+    "pgServerName": "[format('pg-{0}', variables('baseName'))]"
+  },
+  "resources": {
+    "persistence": {
+      "condition": "[not(variables('isTry'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "persistence",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "vnetName": {
+            "value": "[variables('vnetName')]"
+          },
+          "storageAccountName": {
+            "value": "[variables('storageAccountName')]"
+          },
+          "fileShareName": {
+            "value": "[variables('fileShareName')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.37.4.10188",
+              "templateHash": "175403342751252330"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure location"
+              }
+            },
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "VNet name"
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name (must be globally unique, <=24 chars)"
+              }
+            },
+            "fileShareName": {
+              "type": "string",
+              "defaultValue": "n8ndata",
+              "metadata": {
+                "description": "File share name for n8n persistent data"
+              }
+            },
+            "enablePrivateEndpoints": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Enable private endpoints (always true for Small/Prod initial version)"
+              }
+            }
+          },
+          "variables": {
+            "peSubnetName": "pe-subnet",
+            "dbSubnetName": "db-subnet"
+          },
+          "resources": {
+            "vnet": {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2024-03-01",
+              "name": "[parameters('vnetName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "10.50.0.0/16"
+                  ]
+                },
+                "subnets": [
+                  {
+                    "name": "[variables('peSubnetName')]",
+                    "properties": {
+                      "addressPrefixes": [
+                        "10.50.1.0/24"
+                      ]
+                    }
+                  },
+                  {
+                    "name": "[variables('dbSubnetName')]",
+                    "properties": {
+                      "addressPrefixes": [
+                        "10.50.2.0/24"
+                      ],
+                      "delegations": [
+                        {
+                          "name": "flexibleServers",
+                          "properties": {
+                            "serviceName": "Microsoft.DBforPostgreSQL/flexibleServers"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "storage": {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-01-01",
+              "name": "[parameters('storageAccountName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "allowBlobPublicAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "allowSharedKeyAccess": true,
+                "networkAcls": {
+                  "bypass": "AzureServices",
+                  "defaultAction": "[if(parameters('enablePrivateEndpoints'), 'Deny', 'Allow')]"
+                },
+                "isHnsEnabled": false,
+                "largeFileSharesState": "Enabled"
+              }
+            },
+            "fileShare": {
+              "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/default/{1}', parameters('storageAccountName'), parameters('fileShareName'))]",
+              "properties": {
+                "accessTier": "TransactionOptimized",
+                "enabledProtocols": "SMB"
+              },
+              "dependsOn": [
+                "storage"
+              ]
+            },
+            "privateDnsZoneStorage": {
+              "condition": "[parameters('enablePrivateEndpoints')]",
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "privatelink.file.core.windows.net",
+              "location": "global"
+            },
+            "dnsVnetLink": {
+              "condition": "[parameters('enablePrivateEndpoints')]",
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', 'privatelink.file.core.windows.net', 'stg-link')]",
+              "location": "global",
+              "properties": {
+                "registrationEnabled": false,
+                "virtualNetwork": {
+                  "id": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+                }
+              },
+              "dependsOn": [
+                "privateDnsZoneStorage",
+                "vnet"
+              ]
+            },
+            "storagePe": {
+              "condition": "[parameters('enablePrivateEndpoints')]",
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2021-08-01",
+              "name": "[format('{0}-pe', parameters('storageAccountName'))]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "subnet": {
+                  "id": "[reference('vnet').subnets[0].id]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "file",
+                    "properties": {
+                      "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                      "groupIds": [
+                        "file"
+                      ],
+                      "privateLinkServiceConnectionState": {
+                        "status": "Approved",
+                        "actionsRequired": "None"
+                      }
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "storage",
+                "vnet"
+              ]
+            },
+            "peZoneGroup": {
+              "condition": "[parameters('enablePrivateEndpoints')]",
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2021-08-01",
+              "name": "[format('{0}/{1}', format('{0}-pe', parameters('storageAccountName')), 'fileZoneGroup')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "storageFile",
+                    "properties": {
+                      "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', 'privatelink.file.core.windows.net')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "privateDnsZoneStorage",
+                "storagePe"
+              ]
+            }
+          },
+          "outputs": {
+            "vnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+            },
+            "peSubnetId": {
+              "type": "string",
+              "value": "[reference('vnet').subnets[0].id]"
+            },
+            "dbSubnetId": {
+              "type": "string",
+              "value": "[reference('vnet').subnets[1].id]"
+            },
+            "storageAccountName": {
+              "type": "string",
+              "value": "[parameters('storageAccountName')]"
+            },
+            "storageAccountKey": {
+              "type": "securestring",
+              "value": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-01-01').keys[0].value]"
+            },
+            "fileShareName": {
+              "type": "string",
+              "value": "[parameters('fileShareName')]"
+            }
+          }
+        }
+      }
+    },
+    "postgres": {
+      "condition": "[variables('isProd')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "postgres",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "serverName": {
+            "value": "[variables('pgServerName')]"
+          },
+          "databaseName": {
+            "value": "n8ndb"
+          },
+          "adminLogin": {
+            "value": "n8nadmin"
+          },
+          "delegatedSubnetId": {
+            "value": "[reference('persistence').outputs.dbSubnetId.value]"
+          },
+          "adminPassword": {
+            "value": "[parameters('postgresAdminPassword')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.37.4.10188",
+              "templateHash": "2288574821204638158"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure location"
+              }
+            },
+            "serverName": {
+              "type": "string",
+              "metadata": {
+                "description": "Postgres server name"
+              }
+            },
+            "databaseName": {
+              "type": "string",
+              "defaultValue": "n8ndb",
+              "metadata": {
+                "description": "Database name"
+              }
+            },
+            "adminLogin": {
+              "type": "string",
+              "defaultValue": "n8nadmin",
+              "metadata": {
+                "description": "Admin login name"
+              }
+            },
+            "adminPassword": {
+              "type": "securestring",
+              "metadata": {
+                "description": "Admin password (required)"
+              }
+            },
+            "delegatedSubnetId": {
+              "type": "string",
+              "metadata": {
+                "description": "Delegated subnet id for flexible server"
+              }
+            }
+          },
+          "variables": {
+            "effectivePassword": "[parameters('adminPassword')]",
+            "fqdn": "[format('{0}.postgres.database.azure.com', parameters('serverName'))]"
+          },
+          "resources": {
+            "server": {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+              "apiVersion": "2023-12-01-preview",
+              "name": "[parameters('serverName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_B2s",
+                "tier": "Burstable"
+              },
+              "properties": {
+                "administratorLogin": "[parameters('adminLogin')]",
+                "administratorLoginPassword": "[variables('effectivePassword')]",
+                "version": "15",
+                "network": {
+                  "delegatedSubnetResourceId": "[parameters('delegatedSubnetId')]",
+                  "privateDnsZoneArmResourceId": "",
+                  "publicNetworkAccess": "Disabled"
+                },
+                "storage": {
+                  "storageSizeGB": 64,
+                  "tier": "P4"
+                },
+                "backup": {
+                  "backupRetentionDays": 7,
+                  "geoRedundantBackup": "Disabled"
+                },
+                "highAvailability": {
+                  "mode": "Disabled"
+                },
+                "authConfig": {
+                  "activeDirectoryAuth": "Disabled",
+                  "passwordAuth": "Enabled"
+                }
+              }
+            },
+            "db": {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+              "apiVersion": "2023-12-01-preview",
+              "name": "[format('{0}/{1}', parameters('serverName'), parameters('databaseName'))]",
+              "properties": {
+                "charset": "UTF8",
+                "collation": "en_US.utf8"
+              },
+              "dependsOn": [
+                "server"
+              ]
+            }
+          },
+          "outputs": {
+            "serverName": {
+              "type": "string",
+              "value": "[parameters('serverName')]"
+            },
+            "fqdn": {
+              "type": "string",
+              "value": "[variables('fqdn')]"
+            },
+            "databaseName": {
+              "type": "string",
+              "value": "[parameters('databaseName')]"
+            },
+            "adminLogin": {
+              "type": "string",
+              "value": "[parameters('adminLogin')]"
+            },
+            "adminPassword": {
+              "type": "securestring",
+              "value": "[variables('effectivePassword')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "persistence"
+      ]
+    },
+    "appBase": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "app",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "envName": "[if(variables('isTry'), if(empty(parameters('acaEnvironmentName')), createObject('value', format('env-{0}', parameters('environmentName'))), createObject('value', parameters('acaEnvironmentName'))), createObject('value', variables('envNameSp')))]",
+          "createNewEnvironment": "[if(variables('isTry'), createObject('value', variables('createNewEnvironment')), createObject('value', true()))]",
+          "image": {
+            "value": "[parameters('image')]"
+          },
+          "cpu": {
+            "value": 2
+          },
+          "memory": {
+            "value": "4Gi"
+          },
+          "mountEnabled": {
+            "value": "[not(variables('isTry'))]"
+          },
+          "storageAccountName": "[if(not(variables('isTry')), createObject('value', reference('persistence').outputs.storageAccountName.value), createObject('value', ''))]",
+          "fileShareName": "[if(not(variables('isTry')), createObject('value', reference('persistence').outputs.fileShareName.value), createObject('value', ''))]",
+          "storageAccountKey": "[if(not(variables('isTry')), createObject('value', listOutputsWithSecureValues('persistence', '2022-09-01').storageAccountKey), createObject('value', ''))]",
+          "dbEnabled": {
+            "value": "[variables('isProd')]"
+          },
+          "dbHost": "[if(variables('isProd'), createObject('value', reference('postgres').outputs.fqdn.value), createObject('value', ''))]",
+          "dbDatabase": "[if(variables('isProd'), createObject('value', reference('postgres').outputs.databaseName.value), createObject('value', ''))]",
+          "dbUser": "[if(variables('isProd'), createObject('value', reference('postgres').outputs.adminLogin.value), createObject('value', ''))]",
+          "dbPassword": "[if(variables('isProd'), createObject('value', listOutputsWithSecureValues('postgres', '2022-09-01').adminPassword), createObject('value', ''))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.37.4.10188",
+              "templateHash": "15927543218749325704"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Location for resources"
+              }
+            },
+            "envName": {
+              "type": "string",
+              "metadata": {
+                "description": "ACA managed environment name"
+              }
+            },
+            "createNewEnvironment": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Create new managed environment"
+              }
+            },
+            "image": {
+              "type": "string",
+              "defaultValue": "docker.n8n.io/n8nio/n8n",
+              "metadata": {
+                "description": "n8n container image"
+              }
+            },
+            "cpu": {
+              "type": "int",
+              "defaultValue": 2,
+              "metadata": {
+                "description": "CPU cores"
+              }
+            },
+            "memory": {
+              "type": "string",
+              "defaultValue": "4Gi",
+              "allowedValues": [
+                "4Gi"
+              ],
+              "metadata": {
+                "description": "Memory (Gi)"
+              }
+            },
+            "mountEnabled": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Enable Azure File mount"
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Storage account name for file share (required if mountEnabled)"
+              }
+            },
+            "fileShareName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "File share name (required if mountEnabled)"
+              }
+            },
+            "storageAccountKey": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Storage account key (required if mountEnabled)"
+              }
+            },
+            "dbEnabled": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Enable Postgres DB integration"
+              }
+            },
+            "dbHost": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "DB host FQDN"
+              }
+            },
+            "dbDatabase": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "DB name"
+              }
+            },
+            "dbUser": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "DB user"
+              }
+            },
+            "dbPassword": {
+              "type": "securestring",
+              "defaultValue": "",
+              "metadata": {
+                "description": "DB password"
+              }
+            }
+          },
+          "variables": {
+            "wpConsumptionName": "Consumption",
+            "encryptionKey": "[uniqueString(resourceGroup().id, 'n8n-encryption-key')]",
+            "basicAuthPassword": "[uniqueString(resourceGroup().id, 'n8n-basic-auth-pass')]",
+            "suffix": "[toLower(substring(uniqueString(resourceGroup().id, parameters('envName'), parameters('image')), 0, 5))]",
+            "appName": "[format('n8n-{0}', variables('suffix'))]",
+            "effectiveEnvId": "[if(parameters('createNewEnvironment'), resourceId('Microsoft.App/managedEnvironments', parameters('envName')), resourceId('Microsoft.App/managedEnvironments', parameters('envName')))]",
+            "dbEnv": "[if(parameters('dbEnabled'), createArray(createObject('name', 'DB_TYPE', 'value', 'postgresdb'), createObject('name', 'DB_POSTGRESDB_HOST', 'value', parameters('dbHost')), createObject('name', 'DB_POSTGRESDB_PORT', 'value', '5432'), createObject('name', 'DB_POSTGRESDB_DATABASE', 'value', parameters('dbDatabase')), createObject('name', 'DB_POSTGRESDB_USER', 'value', parameters('dbUser')), createObject('name', 'DB_POSTGRESDB_PASSWORD', 'secretRef', 'db-password'), createObject('name', 'DB_POSTGRESDB_SCHEMA', 'value', 'n8n')), createArray())]"
+          },
+          "resources": {
+            "env": {
+              "condition": "[parameters('createNewEnvironment')]",
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2024-03-01",
+              "name": "[parameters('envName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "workloadProfiles": [
+                  {
+                    "name": "[variables('wpConsumptionName')]",
+                    "workloadProfileType": "Consumption"
+                  }
+                ]
+              }
+            },
+            "existingEnv": {
+              "condition": "[not(parameters('createNewEnvironment'))]",
+              "existing": true,
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2024-03-01",
+              "name": "[parameters('envName')]"
+            },
+            "app": {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('appName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "managedEnvironmentId": "[variables('effectiveEnvId')]",
+                "workloadProfileName": "[variables('wpConsumptionName')]",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 5678,
+                    "transport": "http"
+                  },
+                  "secrets": "[concat(if(parameters('mountEnabled'), createArray(createObject('name', 'storage-key', 'value', parameters('storageAccountKey'))), createArray()), if(parameters('dbEnabled'), createArray(createObject('name', 'db-password', 'value', parameters('dbPassword'))), createArray()))]"
+                },
+                "template": {
+                  "volumes": "[if(parameters('mountEnabled'), createArray(createObject('name', 'n8n-data', 'storageType', 'AzureFile', 'azureFile', createObject('accountName', parameters('storageAccountName'), 'shareName', parameters('fileShareName'), 'accessMode', 'ReadWrite', 'accountKey', parameters('storageAccountKey')))), createArray())]",
+                  "containers": [
+                    {
+                      "name": "n8n",
+                      "image": "[parameters('image')]",
+                      "env": "[concat(createArray(createObject('name', 'N8N_ENCRYPTION_KEY', 'value', variables('encryptionKey')), createObject('name', 'GENERIC_TIMEZONE', 'value', 'UTC'), createObject('name', 'WEBHOOK_URL', 'value', format('https://{0}', format('{0}.{1}', variables('appName'), if(parameters('createNewEnvironment'), reference('env').defaultDomain, reference('existingEnv').defaultDomain)))), createObject('name', 'TRUST_PROXY', 'value', 'true'), createObject('name', 'N8N_BASIC_AUTH_ACTIVE', 'value', 'true'), createObject('name', 'N8N_BASIC_AUTH_USER', 'value', 'n8nuser'), createObject('name', 'N8N_BASIC_AUTH_PASSWORD', 'value', variables('basicAuthPassword')), createObject('name', 'N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS', 'value', 'false')), variables('dbEnv'))]",
+                      "resources": {
+                        "cpu": "[parameters('cpu')]",
+                        "memory": "[parameters('memory')]"
+                      },
+                      "volumeMounts": "[if(parameters('mountEnabled'), createArray(createObject('volumeName', 'n8n-data', 'mountPath', '/home/node/.n8n')), createArray())]"
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  }
+                }
+              },
+              "dependsOn": [
+                "env",
+                "existingEnv"
+              ]
+            }
+          },
+          "outputs": {
+            "containerAppName": {
+              "type": "string",
+              "value": "[variables('appName')]"
+            },
+            "environmentName": {
+              "type": "string",
+              "value": "[parameters('envName')]"
+            },
+            "containerAppFqdn": {
+              "type": "string",
+              "value": "[format('https://{0}', format('{0}.{1}', variables('appName'), if(parameters('createNewEnvironment'), reference('env').defaultDomain, reference('existingEnv').defaultDomain)))]"
+            },
+            "containerAppRawFqdn": {
+              "type": "string",
+              "value": "[format('{0}.{1}', variables('appName'), if(parameters('createNewEnvironment'), reference('env').defaultDomain, reference('existingEnv').defaultDomain))]"
+            },
+            "basicAuthPassword": {
+              "type": "securestring",
+              "value": "[variables('basicAuthPassword')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "persistence",
+        "postgres"
+      ]
+    }
+  },
+  "outputs": {
+    "AZURE_LOCATION": {
+      "type": "string",
+      "value": "[parameters('location')]"
+    },
+    "AZURE_CONTAINER_APP_NAME": {
+      "type": "string",
+      "value": "[reference('appBase').outputs.containerAppName.value]"
+    },
+    "AZURE_CONTAINER_APP_ENVIRONMENT": {
+      "type": "string",
+      "value": "[reference('appBase').outputs.environmentName.value]"
+    },
+    "CONTAINER_APP_URL": {
+      "type": "string",
+      "value": "[reference('appBase').outputs.containerAppFqdn.value]"
+    },
+    "STORAGE_ACCOUNT": {
+      "type": "string",
+      "value": "[if(not(variables('isTry')), reference('persistence').outputs.storageAccountName.value, '')]"
+    },
+    "FILE_SHARE": {
+      "type": "string",
+      "value": "[if(not(variables('isTry')), reference('persistence').outputs.fileShareName.value, '')]"
+    },
+    "POSTGRES_SERVER": {
+      "type": "string",
+      "value": "[if(variables('isProd'), reference('postgres').outputs.serverName.value, '')]"
+    },
+    "POSTGRES_FQDN": {
+      "type": "string",
+      "value": "[if(variables('isProd'), reference('postgres').outputs.fqdn.value, '')]"
+    },
+    "POSTGRES_DB": {
+      "type": "string",
+      "value": "[if(variables('isProd'), reference('postgres').outputs.databaseName.value, '')]"
+    },
+    "DEPLOYMENT_TIER": {
+      "type": "string",
+      "value": "[parameters('deploymentTier')]"
+    }
+  }
+}
