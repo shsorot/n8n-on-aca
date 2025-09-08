@@ -67,7 +67,8 @@ module postgres 'modules/postgres-private.bicep' = if (isProd) {
     databaseName: 'n8ndb'
     adminLogin: 'n8nadmin'
     delegatedSubnetId: persistence.outputs.dbSubnetId
-  adminPassword: postgresAdminPassword
+    adminPassword: postgresAdminPassword
+    privateDnsZoneId: persistence.outputs.postgresPrivateDnsZoneId
   }
   dependsOn: [
     persistence

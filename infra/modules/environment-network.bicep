@@ -61,7 +61,6 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
       bypass: 'AzureServices'
       defaultAction: enablePrivateEndpoints ? 'Deny' : 'Allow'
     }
-  // enableHttpsTrafficOnly & supportsHttpsTrafficOnly not valid in this api version (redundant)
     isHnsEnabled: false
     largeFileSharesState: 'Enabled'
   }
@@ -84,6 +83,24 @@ resource privateDnsZoneStorage 'Microsoft.Network/privateDnsZones@2024-06-01' = 
 resource dnsVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (enablePrivateEndpoints) {
   name: 'stg-link'
   parent: privateDnsZoneStorage
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
+    }
+  }
+}
+
+// Private DNS zone for Postgres flexible servers
+resource privateDnsZonePostgres 'Microsoft.Network/privateDnsZones@2024-06-01' = if (enablePrivateEndpoints) {
+  name: 'privatelink.postgres.database.azure.com'
+  location: 'global'
+}
+
+resource dnsVnetLinkPostgres 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = if (enablePrivateEndpoints) {
+  name: 'pg-link'
+  parent: privateDnsZonePostgres
   location: 'global'
   properties: {
     registrationEnabled: false
@@ -140,3 +157,4 @@ output storageAccountName string = storage.name
 @secure()
 output storageAccountKey string = listKeys(storage.id, '2023-01-01').keys[0].value
 output fileShareName string = fileShareName
+output postgresPrivateDnsZoneId string = enablePrivateEndpoints ? privateDnsZonePostgres.id : ''
