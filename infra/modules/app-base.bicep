@@ -13,6 +13,8 @@ param cpu int = 2
 param memory string = '4Gi'
 @description('Enable Azure File mount')
 param mountEnabled bool = false
+@description('Deployment tier label for diagnostics')
+param deploymentTier string = 'Try'
 @description('Storage account name for file share (required if mountEnabled)')
 param storageAccountName string = ''
 @description('File share name (required if mountEnabled)')
@@ -93,6 +95,10 @@ var coreEnv = [
     name: 'N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS'
     value: 'false'
   }
+  {
+    name: 'DEPLOYMENT_TIER'
+    value: deploymentTier
+  }
 ]
 
 var dbEnv = dbEnabled ? [
@@ -128,41 +134,47 @@ var dbEnv = dbEnabled ? [
 
 var allEnv = concat(coreEnv, dbEnv)
 
+// Secrets array (avoid nested conditional concat directly inline)
+var storageSecret = mountEnabled ? [ {
+  name: 'storage-key'
+  value: storageAccountKey
+} ] : []
+var dbSecret = dbEnabled ? [ {
+  name: 'db-password'
+  value: dbPassword
+} ] : []
+var allSecrets = concat(storageSecret, dbSecret)
+
+// Volumes definition
+var volumesArr = mountEnabled ? [ {
+  name: 'n8n-data'
+  storageType: 'AzureFile'
+  storageName: 'n8n-storage'
+} ] : []
+
+// Dependency arrays
+// (removed) direct dependency resolution inline below
+
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
-  properties: {
-    managedEnvironmentId: effectiveEnvId
-    workloadProfileName: wpConsumptionName
-    configuration: {
-      ingress: {
-        external: true
-        targetPort: 5678
-        transport: 'http'
-      }
-      secrets: concat(
-        mountEnabled ? [ {
-          name: 'storage-key'
-          value: storageAccountKey
-        } ] : [],
-        dbEnabled ? [ {
-          name: 'db-password'
-          value: dbPassword
-        } ] : []
-      )
-    }
-    template: {
-      volumes: mountEnabled ? [ {
-        name: 'n8n-data'
-        storageType: 'AzureFile'
-        azureFile: {
-          accountName: storageAccountName
-          shareName: fileShareName
-          accessMode: 'ReadWrite'
-          accountKey: storageAccountKey
+  dependsOn: createNewEnvironment
+    ? (mountEnabled ? [ env, managedStorageNew ] : [ env ])
+    : (mountEnabled ? [ managedStorageExisting ] : [])
+    properties: {
+      managedEnvironmentId: effectiveEnvId
+      workloadProfileName: wpConsumptionName
+      configuration: {
+        ingress: {
+          external: true
+          targetPort: 5678
+          transport: 'http'
         }
-      } ] : []
-      containers: [
+        secrets: allSecrets
+      }
+      template: {
+        volumes: volumesArr
+        containers: [
         {
           name: 'n8n'
           image: image
@@ -176,11 +188,40 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             mountPath: '/home/node/.n8n'
           } ] : []
         }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 1
+        ]
+        scale: {
+          minReplicas: 1
+          maxReplicas: 1
+        }
       }
+    }
+}
+
+// Storage definition resource when mountEnabled
+// Storage for newly created env
+resource managedStorageNew 'Microsoft.App/managedEnvironments/storages@2024-03-01' = if (mountEnabled && createNewEnvironment) {
+  name: 'n8n-storage'
+  parent: env
+  properties: {
+    azureFile: {
+      accountName: storageAccountName
+      accountKey: storageAccountKey
+      shareName: fileShareName
+      accessMode: 'ReadWrite'
+    }
+  }
+}
+
+// Storage for existing env reference
+resource managedStorageExisting 'Microsoft.App/managedEnvironments/storages@2024-03-01' = if (mountEnabled && !createNewEnvironment) {
+  name: 'n8n-storage'
+  parent: existingEnv
+  properties: {
+    azureFile: {
+      accountName: storageAccountName
+      accountKey: storageAccountKey
+      shareName: fileShareName
+      accessMode: 'ReadWrite'
     }
   }
 }

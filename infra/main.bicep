@@ -8,13 +8,13 @@ param environmentName string
 @description('Primary location for all resources')
 param location string = 'centralus'
 
-@description('Deployment tier: Try | Small | Production')
+@description('Deployment tier: Try | Small | Production (must be provided)')
 @allowed([
   'Try'
   'Small'
   'Production'
 ])
-param deploymentTier string = 'Try'
+param tier string
 
 @description('(Try tier only) existing ACA environment name; blank = create new one')
 param acaEnvironmentName string = ''
@@ -23,11 +23,13 @@ param acaEnvironmentName string = ''
 param image string = 'docker.n8n.io/n8nio/n8n'
 
 // Tier flags
-var isTry = deploymentTier == 'Try'
-var isProd = deploymentTier == 'Production'
+var isTry = tier == 'Try'
+var isProd = tier == 'Production'
 
 // Try tier uses app-base directly with no persistence or database
-var createNewEnvironment = isTry && empty(acaEnvironmentName)
+// Determine whether to create a new ACA environment
+var createNewEnvironmentTry = isTry && empty(acaEnvironmentName)
+var createNewEnvironmentNonTry = !isTry && empty(acaEnvironmentName)
 
 // Common naming for Small/Prod
 var baseName = toLower(replace(environmentName, '_', '-'))
@@ -51,6 +53,8 @@ module persistence 'modules/environment-network.bicep' = if (!isTry) {
     vnetName: vnetName
     storageAccountName: storageAccountName
     fileShareName: fileShareName
+  // Enable private endpoints for Small and Production tiers
+  enablePrivateEndpoints: true
   }
 }
 
@@ -75,11 +79,14 @@ module appBase 'modules/app-base.bicep' = {
   name: 'app'
   params: {
     location: location
-    envName: isTry ? (empty(acaEnvironmentName) ? 'env-${environmentName}' : acaEnvironmentName) : envNameSp
-    createNewEnvironment: isTry ? createNewEnvironment : true
+    envName: isTry 
+      ? (empty(acaEnvironmentName) ? 'env-${environmentName}' : acaEnvironmentName)
+      : (empty(acaEnvironmentName) ? envNameSp : acaEnvironmentName)
+    createNewEnvironment: isTry ? createNewEnvironmentTry : createNewEnvironmentNonTry
     image: image
     cpu: 2
     memory: '4Gi'
+  deploymentTier: tier
     // Enable mount only for Small/Prod
     mountEnabled: !isTry
     storageAccountName: !isTry ? persistence.outputs.storageAccountName : ''
@@ -103,4 +110,4 @@ output FILE_SHARE string = !isTry ? persistence.outputs.fileShareName : ''
 output POSTGRES_SERVER string = isProd ? postgres.outputs.serverName : ''
 output POSTGRES_FQDN string = isProd ? postgres.outputs.fqdn : ''
 output POSTGRES_DB string = isProd ? postgres.outputs.databaseName : ''
-output DEPLOYMENT_TIER string = deploymentTier
+output _diagnosticDeploymentTierParam string = tier

@@ -1,0 +1,30 @@
+# more info on this file here:
+# https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/azd-schema
+
+name: n8n-on-aca
+metadata:
+  template: n8n-on-aca@1.0.0
+  description: Deploy n8n workflow automation platform on Azure Container Apps
+
+infra:
+  provider: bicep
+  parameters:
+    environmentName: ${ENVIRONMENT_NAME}
+    location: ${AZURE_LOCATION}
+    tier: ${DEPLOYMENT_TIER}
+    acaEnvironmentName: ${ACA_ENVIRONMENT_NAME}
+hooks:
+  prepackage:
+    - run: ./scripts/fix-tier.sh
+  preprovision:
+    - run: ./scripts/fix-tier.sh
+  predeploy:
+    - run: ./scripts/fix-tier.sh
+
+#services:
+#  n8n:
+#    project: .
+#    language: ts
+#    host: containerapp
+
+# bring the post deploy hooks back here

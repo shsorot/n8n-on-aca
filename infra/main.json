@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.37.4.10188",
-      "templateHash": "8419209761601308972"
+      "templateHash": "8430422223507290260"
     }
   },
   "parameters": {
@@ -530,7 +530,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.37.4.10188",
-              "templateHash": "15927543218749325704"
+              "templateHash": "6476697756077895129"
             }
           },
           "parameters": {
@@ -690,7 +690,7 @@
                   "secrets": "[concat(if(parameters('mountEnabled'), createArray(createObject('name', 'storage-key', 'value', parameters('storageAccountKey'))), createArray()), if(parameters('dbEnabled'), createArray(createObject('name', 'db-password', 'value', parameters('dbPassword'))), createArray()))]"
                 },
                 "template": {
-                  "volumes": "[if(parameters('mountEnabled'), createArray(createObject('name', 'n8n-data', 'storageType', 'AzureFile', 'azureFile', createObject('accountName', parameters('storageAccountName'), 'shareName', parameters('fileShareName'), 'accessMode', 'ReadWrite', 'accountKey', parameters('storageAccountKey')))), createArray())]",
+                  "volumes": "[if(parameters('mountEnabled'), createArray(createObject('name', 'n8n-data', 'storageType', 'AzureFile', 'storageName', 'n8n-storage')), createArray())]",
                   "containers": [
                     {
                       "name": "n8n",
@@ -713,6 +713,20 @@
                 "env",
                 "existingEnv"
               ]
+            },
+            "managedStorage": {
+              "condition": "[parameters('mountEnabled')]",
+              "type": "Microsoft.App/managedEnvironments/storages",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}/n8n-storage', parameters('envName'))]",
+              "properties": {
+                "azureFile": {
+                  "accountName": "[parameters('storageAccountName')]",
+                  "accountKey": "[parameters('storageAccountKey')]",
+                  "shareName": "[parameters('fileShareName')]",
+                  "accessMode": "ReadWrite"
+                }
+              }
             }
           },
           "outputs": {
@@ -782,7 +796,7 @@
       "type": "string",
       "value": "[if(variables('isProd'), reference('postgres').outputs.databaseName.value, '')]"
     },
-    "DEPLOYMENT_TIER": {
+    "_diagnosticDeploymentTierParam": {
       "type": "string",
       "value": "[parameters('deploymentTier')]"
     }
