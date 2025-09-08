@@ -21,6 +21,8 @@ param acaEnvironmentName string = ''
 
 @description('n8n Docker image')
 param image string = 'docker.n8n.io/n8nio/n8n'
+@description('Use NFS protocol for Azure Files mounts when persistence is enabled (Small/Prod)')
+param useNfs bool = true
 
 // Tier flags
 var isTry = tier == 'Try'
@@ -89,7 +91,7 @@ module appBase 'modules/app-base.bicep' = {
     memory: '4Gi'
   deploymentTier: tier
     // Enable mount only for Small/Prod
-    mountEnabled: !isTry
+  mountEnabled: !isTry
     storageAccountName: !isTry ? persistence.outputs.storageAccountName : ''
     fileShareName: !isTry ? persistence.outputs.fileShareName : ''
     storageAccountKey: !isTry ? persistence.outputs.storageAccountKey : ''
@@ -98,6 +100,7 @@ module appBase 'modules/app-base.bicep' = {
     dbDatabase: isProd ? postgres.outputs.databaseName : ''
     dbUser: isProd ? postgres.outputs.adminLogin : ''
     dbPassword: isProd ? postgres.outputs.adminPassword : ''
+    acaSubnetId: !isTry ? persistence.outputs.acaSubnetId : ''
   }
   dependsOn: !isTry ? (isProd ? [ persistence, postgres ] : [ persistence ]) : []
 }

@@ -12,6 +12,7 @@ param enablePrivateEndpoints bool = true
 // Basic VNet with two subnets: one for private endpoints, one delegated for Postgres (optional usage by caller)
 var peSubnetName = 'pe-subnet'
 var dbSubnetName = 'db-subnet'
+var acaSubnetName = 'aca-subnet'
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-03-01' = {
   name: vnetName
@@ -41,6 +42,20 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-03-01' = {
           ]
         }
       }
+      {
+        name: acaSubnetName
+        properties: {
+          addressPrefixes: [ '10.50.3.0/24' ]
+          delegations: [
+            {
+              name: 'acaDelegation'
+              properties: {
+                serviceName: 'Microsoft.App/environments'
+              }
+            }
+          ]
+        }
+      }
     ]
   }
 }
@@ -50,27 +65,27 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location
   sku: {
-    name: 'Standard_LRS'
+    name: 'Premium_LRS'
   }
-  kind: 'StorageV2'
+  kind: 'FileStorage'
   properties: {
     allowBlobPublicAccess: false
-    minimumTlsVersion: 'TLS1_2'
+    // NFS requires secure transfer disabled
+    supportsHttpsTrafficOnly: false
     allowSharedKeyAccess: true
     networkAcls: {
       bypass: 'AzureServices'
       defaultAction: enablePrivateEndpoints ? 'Deny' : 'Allow'
     }
-    isHnsEnabled: false
-    largeFileSharesState: 'Enabled'
   }
 }
 
 resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
   name: '${storage.name}/default/${fileShareName}'
   properties: {
-    accessTier: 'TransactionOptimized'
-    enabledProtocols: 'SMB'
+  // Premium file shares (FileStorage) support NFS protocol and require a provisioned quota
+  enabledProtocols: 'NFS'
+  shareQuota: 100
   }
 }
 
@@ -158,3 +173,4 @@ output storageAccountName string = storage.name
 output storageAccountKey string = listKeys(storage.id, '2023-01-01').keys[0].value
 output fileShareName string = fileShareName
 output postgresPrivateDnsZoneId string = enablePrivateEndpoints ? privateDnsZonePostgres.id : ''
+output acaSubnetId string = vnet.properties.subnets[2].id

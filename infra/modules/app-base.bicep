@@ -33,6 +33,8 @@ param dbUser string = ''
 @secure()
 @description('DB password')
 param dbPassword string = ''
+@description('ACA subnet resource ID (optional for VNet integration)')
+param acaSubnetId string = ''
 
 var wpConsumptionName = 'Consumption'
 var encryptionKey = uniqueString(resourceGroup().id, 'n8n-encryption-key')
@@ -50,6 +52,9 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = if (createNewEnvir
         workloadProfileType: 'Consumption'
       }
     ]
+    vnetConfiguration: !empty(acaSubnetId) ? {
+      infrastructureSubnetId: acaSubnetId
+    } : null
   }
 }
 
@@ -155,7 +160,7 @@ var volumesArr = mountEnabled ? [ {
 // Dependency arrays
 // (removed) direct dependency resolution inline below
 
-resource app 'Microsoft.App/containerApps@2024-03-01' = {
+resource app 'Microsoft.App/containerApps@2025-02-02-preview' = {
   name: appName
   location: location
   dependsOn: createNewEnvironment
@@ -173,7 +178,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         secrets: allSecrets
       }
       template: {
-        volumes: volumesArr
+        volumes: mountEnabled ? [ {
+          name: 'n8n-data'
+          storageType: 'NfsAzureFile'
+          storageName: 'n8n-storage'
+          mountOptions: 'vers=4.1'
+        } ] : []
         containers: [
         {
           name: 'n8n'
@@ -199,28 +209,26 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 
 // Storage definition resource when mountEnabled
 // Storage for newly created env
-resource managedStorageNew 'Microsoft.App/managedEnvironments/storages@2024-03-01' = if (mountEnabled && createNewEnvironment) {
+resource managedStorageNew 'Microsoft.App/managedEnvironments/storages@2025-02-02-preview' = if (mountEnabled && createNewEnvironment) {
   name: 'n8n-storage'
   parent: env
   properties: {
-    azureFile: {
-      accountName: storageAccountName
-      accountKey: storageAccountKey
-      shareName: fileShareName
+    nfsAzureFile: {
+      server: '${storageAccountName}.privatelink.file.core.windows.net'
+  shareName: '/${storageAccountName}/${fileShareName}'
       accessMode: 'ReadWrite'
     }
   }
 }
 
 // Storage for existing env reference
-resource managedStorageExisting 'Microsoft.App/managedEnvironments/storages@2024-03-01' = if (mountEnabled && !createNewEnvironment) {
+resource managedStorageExisting 'Microsoft.App/managedEnvironments/storages@2025-02-02-preview' = if (mountEnabled && !createNewEnvironment) {
   name: 'n8n-storage'
   parent: existingEnv
   properties: {
-    azureFile: {
-      accountName: storageAccountName
-      accountKey: storageAccountKey
-      shareName: fileShareName
+    nfsAzureFile: {
+      server: '${storageAccountName}.privatelink.file.core.windows.net'
+  shareName: '/${storageAccountName}/${fileShareName}'
       accessMode: 'ReadWrite'
     }
   }
