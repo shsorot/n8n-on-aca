@@ -11,15 +11,8 @@ infra:
   parameters:
     environmentName: ${ENVIRONMENT_NAME}
     location: ${AZURE_LOCATION}
-    tier: ${DEPLOYMENT_TIER}
     acaEnvironmentName: ${ACA_ENVIRONMENT_NAME}
-hooks:
-  prepackage:
-    - run: ./scripts/fix-tier.sh
-  preprovision:
-    - run: ./scripts/fix-tier.sh
-  predeploy:
-    - run: ./scripts/fix-tier.sh
+hooks: {}
 
 #services:
 #  n8n:
