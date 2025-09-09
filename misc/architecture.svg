@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="240" viewBox="0 0 800 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tier diagram: Try, Small, Production">
+  <style>
+    .title { font: bold 20px sans-serif; fill: #0f172a }
+    .tier { font: 14px sans-serif; fill: #0f172a }
+    .box { fill: #eef2ff; stroke: #6366f1; stroke-width: 2 }
+    .sub { font: 12px sans-serif; fill: #374151 }
+  </style>
+  <rect x="16" y="16" width="768" height="40" rx="6" class="box" fill="#eef2ff" stroke="#111827"/>
+  <text x="32" y="44" class="title">n8n-on-ACA - Tiered Deployments</text>
+
+  <!-- Try -->
+  <rect x="32" y="80" width="216" height="120" rx="8" class="box"/>
+  <text x="46" y="104" class="tier">Try</text>
+  <text x="46" y="126" class="sub">- Stateless</text>
+  <text x="46" y="144" class="sub">- No storage</text>
+  <text x="46" y="162" class="sub">- No DB</text>
+
+  <!-- Small -->
+  <rect x="292" y="60" width="216" height="140" rx="8" class="box"/>
+  <text x="306" y="88" class="tier">Small</text>
+  <text x="306" y="110" class="sub">- Azure Files (NFS)</text>
+  <text x="306" y="128" class="sub">- VNet + Private Endpoint</text>
+  <text x="306" y="146" class="sub">- No DB</text>
+
+  <!-- Production -->
+  <rect x="552" y="40" width="216" height="160" rx="8" class="box"/>
+  <text x="566" y="72" class="tier">Production</text>
+  <text x="566" y="96" class="sub">- Azure Files (NFS)</text>
+  <text x="566" y="114" class="sub">- Postgres Flexible Server (private)</text>
+  <text x="566" y="132" class="sub">- VNet + Private Endpoints</text>
+
+  <!-- Connectors -->
+  <line x1="248" y1="140" x2="292" y2="140" stroke="#9ca3af" stroke-width="2" stroke-dasharray="4,4"/>
+  <line x1="508" y1="120" x2="552" y2="120" stroke="#9ca3af" stroke-width="2" stroke-dasharray="4,4"/>
+
+</svg>
