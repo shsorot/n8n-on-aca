@@ -135,6 +135,10 @@ var dbEnv = dbEnabled ? [
     name: 'DB_POSTGRESDB_SCHEMA'
     value: 'n8n'
   }
+  {
+    name: 'DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED'
+    value: 'false'
+  }
 ] : []
 
 var allEnv = concat(coreEnv, dbEnv)
