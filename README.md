@@ -6,7 +6,7 @@ This project provides an Azure Developer CLI (azd) based deployment of [n8n](htt
 
 
 ## Tiers Overview
-![deployment tiers](./misc/deployment.png)
+![deployment tiers](./misc/architecture.svg)
 
 | Tier | Purpose | Persistence | Postgres | Private Networking |
 |------|---------|-------------|----------|--------------------|
