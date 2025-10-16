@@ -21,8 +21,8 @@ param acaEnvironmentName string = ''
 
 @description('n8n Docker image')
 param image string = 'docker.n8n.io/n8nio/n8n'
-@description('Use NFS protocol for Azure Files mounts when persistence is enabled (Small/Prod)')
-param useNfs bool = true
+@description('Use Azure Managed File Share (Microsoft.FileShares) instead of traditional Storage Account')
+param useManagedFileShare bool = true
 
 // Tier flags
 var isTry = tier == 'Try'
@@ -55,12 +55,10 @@ module persistence 'modules/environment-network.bicep' = if (!isTry) {
     vnetName: vnetName
     storageAccountName: storageAccountName
     fileShareName: fileShareName
-  // Enable private endpoints for Small and Production tiers
-  enablePrivateEndpoints: true
+    useManagedFileShare: useManagedFileShare
+    enablePrivateEndpoints: true
   }
-}
-
-// Postgres for Production only
+}// Postgres for Production only
 module postgres 'modules/postgres-private.bicep' = if (isProd) {
   name: 'postgres'
   params: {
@@ -68,13 +66,10 @@ module postgres 'modules/postgres-private.bicep' = if (isProd) {
     serverName: pgServerName
     databaseName: 'n8ndb'
     adminLogin: 'n8nadmin'
-    delegatedSubnetId: persistence.outputs.dbSubnetId
+    delegatedSubnetId: persistence!.outputs.dbSubnetId
     adminPassword: postgresAdminPassword
-    privateDnsZoneId: persistence.outputs.postgresPrivateDnsZoneId
+    privateDnsZoneId: persistence!.outputs.postgresPrivateDnsZoneId
   }
-  dependsOn: [
-    persistence
-  ]
 }
 
 // App for all tiers
@@ -82,25 +77,26 @@ module appBase 'modules/app-base.bicep' = {
   name: 'app'
   params: {
     location: location
-    envName: isTry 
+    envName: isTry
       ? (empty(acaEnvironmentName) ? 'env-${environmentName}' : acaEnvironmentName)
       : (empty(acaEnvironmentName) ? envNameSp : acaEnvironmentName)
     createNewEnvironment: isTry ? createNewEnvironmentTry : createNewEnvironmentNonTry
     image: image
     cpu: 2
     memory: '4Gi'
-  deploymentTier: tier
-    // Enable mount only for Small/Prod
-  mountEnabled: !isTry
-    storageAccountName: !isTry ? persistence.outputs.storageAccountName : ''
-    fileShareName: !isTry ? persistence.outputs.fileShareName : ''
-    storageAccountKey: !isTry ? persistence.outputs.storageAccountKey : ''
+    deploymentTier: tier
+    mountEnabled: !isTry
+    useManagedFileShare: useManagedFileShare
+    storageAccountName: isTry ? '' : persistence!.outputs.storageAccountName
+    fileShareName: isTry ? '' : persistence!.outputs.fileShareName
+    fileShareMountPath: isTry ? '' : persistence!.outputs.fileShareMountPath
+
     dbEnabled: isProd
-    dbHost: isProd ? postgres.outputs.fqdn : ''
-    dbDatabase: isProd ? postgres.outputs.databaseName : ''
-    dbUser: isProd ? postgres.outputs.adminLogin : ''
-    dbPassword: isProd ? postgres.outputs.adminPassword : ''
-    acaSubnetId: !isTry ? persistence.outputs.acaSubnetId : ''
+    dbHost: isProd ? postgres!.outputs.fqdn : ''
+    dbDatabase: isProd ? postgres!.outputs.databaseName : ''
+    dbUser: isProd ? postgres!.outputs.adminLogin : ''
+    dbPassword: postgresAdminPassword
+    acaSubnetId: isTry ? '' : persistence!.outputs.acaSubnetId
   }
   dependsOn: !isTry ? (isProd ? [ persistence, postgres ] : [ persistence ]) : []
 }
@@ -109,9 +105,11 @@ output AZURE_LOCATION string = location
 output AZURE_CONTAINER_APP_NAME string = appBase.outputs.containerAppName
 output AZURE_CONTAINER_APP_ENVIRONMENT string = appBase.outputs.environmentName
 output CONTAINER_APP_URL string = appBase.outputs.containerAppFqdn
-output STORAGE_ACCOUNT string = !isTry ? persistence.outputs.storageAccountName : ''
-output FILE_SHARE string = !isTry ? persistence.outputs.fileShareName : ''
-output POSTGRES_SERVER string = isProd ? postgres.outputs.serverName : ''
-output POSTGRES_FQDN string = isProd ? postgres.outputs.fqdn : ''
-output POSTGRES_DB string = isProd ? postgres.outputs.databaseName : ''
+output STORAGE_ACCOUNT string = !isTry ? persistence!.outputs.storageAccountName : ''
+output FILE_SHARE string = !isTry ? persistence!.outputs.fileShareName : ''
+output FILE_SHARE_MOUNT_PATH string = !isTry ? persistence!.outputs.fileShareMountPath : ''
+output STORAGE_TYPE string = useManagedFileShare ? 'Managed File Share' : 'Storage Account'
+output POSTGRES_SERVER string = isProd ? postgres!.outputs.serverName : ''
+output POSTGRES_FQDN string = isProd ? postgres!.outputs.fqdn : ''
+output POSTGRES_DB string = isProd ? postgres!.outputs.databaseName : ''
 output _diagnosticDeploymentTierParam string = tier
