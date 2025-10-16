@@ -6,6 +6,8 @@ param vnetName string
 param storageAccountName string
 @description('File share name for n8n persistent data')
 param fileShareName string = 'n8ndata'
+@description('Use Azure Managed File Share (Microsoft.FileShares) instead of traditional Storage Account')
+param useManagedFileShare bool = true
 @description('Enable private endpoints (always true for Small/Prod initial version)')
 param enablePrivateEndpoints bool = true
 
@@ -60,8 +62,21 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-03-01' = {
   }
 }
 
-// Storage Account for Azure Files
-resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+// Option 1: Azure Managed File Share (Microsoft.FileShares)
+resource managedFileShare 'Microsoft.FileShares/fileShares@2025-06-01-preview' = if (useManagedFileShare) {
+  name: fileShareName
+  location: location
+  properties: {
+    protocol: 'NFS'
+    provisionedStorageGiB: 100
+    mediaTier: 'SSD'
+    redundancy: 'Zone'
+    publicNetworkAccess: 'Disabled'
+  }
+}
+
+// Option 2: Traditional Storage Account for Azure Files
+resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = if (!useManagedFileShare) {
   name: storageAccountName
   location: location
   sku: {
@@ -70,7 +85,6 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   kind: 'FileStorage'
   properties: {
     allowBlobPublicAccess: false
-    // NFS requires secure transfer disabled
     supportsHttpsTrafficOnly: false
     allowSharedKeyAccess: true
     networkAcls: {
@@ -80,18 +94,17 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = {
+resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-01-01' = if (!useManagedFileShare) {
   name: '${storage.name}/default/${fileShareName}'
   properties: {
-  // Premium file shares (FileStorage) support NFS protocol and require a provisioned quota
-  enabledProtocols: 'NFS'
-  shareQuota: 100
+    enabledProtocols: 'NFS'
+    shareQuota: 100
   }
 }
 
-// Private DNS zone for file shares (optional future use). Creating anyway to simplify later enhancements.
+// Private DNS zone for file shares
 resource privateDnsZoneStorage 'Microsoft.Network/privateDnsZones@2024-06-01' = if (enablePrivateEndpoints) {
-  name: 'privatelink.file.core.windows.net'
+  name: 'privatelink.file.${environment().suffixes.storage}'
   location: 'global'
 }
 
@@ -125,8 +138,47 @@ resource dnsVnetLinkPostgres 'Microsoft.Network/privateDnsZones/virtualNetworkLi
   }
 }
 
-// Private Endpoint for storage file service
-resource storagePe 'Microsoft.Network/privateEndpoints@2021-08-01' = if (enablePrivateEndpoints) {
+// Private Endpoint for Managed File Share
+resource managedFileSharePe 'Microsoft.Network/privateEndpoints@2024-03-01' = if (useManagedFileShare && enablePrivateEndpoints) {
+  name: '${fileShareName}-pe'
+  location: location
+  properties: {
+    subnet: {
+      id: vnet.properties.subnets[0].id
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'fileshare'
+        properties: {
+          privateLinkServiceId: managedFileShare!.id
+          groupIds: [ 'FileShare' ]
+          privateLinkServiceConnectionState: {
+            status: 'Approved'
+            actionsRequired: 'None'
+          }
+        }
+      }
+    ]
+  }
+}
+
+resource managedFileSharePeZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-03-01' = if (useManagedFileShare && enablePrivateEndpoints) {
+  name: 'fileShareZoneGroup'
+  parent: managedFileSharePe
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'managedFileShare'
+        properties: {
+          privateDnsZoneId: privateDnsZoneStorage.id
+        }
+      }
+    ]
+  }
+}
+
+// Private Endpoint for Storage Account file service
+resource storagePe 'Microsoft.Network/privateEndpoints@2024-03-01' = if (!useManagedFileShare && enablePrivateEndpoints) {
   name: '${storageAccountName}-pe'
   location: location
   properties: {
@@ -137,7 +189,7 @@ resource storagePe 'Microsoft.Network/privateEndpoints@2021-08-01' = if (enableP
       {
         name: 'file'
         properties: {
-          privateLinkServiceId: storage.id
+          privateLinkServiceId: storage!.id
           groupIds: [ 'file' ]
           privateLinkServiceConnectionState: {
             status: 'Approved'
@@ -149,7 +201,7 @@ resource storagePe 'Microsoft.Network/privateEndpoints@2021-08-01' = if (enableP
   }
 }
 
-resource peZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2021-08-01' = if (enablePrivateEndpoints) {
+resource storagePeZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-03-01' = if (!useManagedFileShare && enablePrivateEndpoints) {
   name: 'fileZoneGroup'
   parent: storagePe
   properties: {
@@ -168,9 +220,10 @@ resource peZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@20
 output vnetId string = vnet.id
 output peSubnetId string = vnet.properties.subnets[0].id
 output dbSubnetId string = vnet.properties.subnets[1].id
-output storageAccountName string = storage.name
+output storageAccountName string = useManagedFileShare ? '' : storage!.name
 @secure()
-output storageAccountKey string = listKeys(storage.id, '2023-01-01').keys[0].value
+output storageAccountKey string = useManagedFileShare ? '' : storage!.listKeys().keys[0].value
 output fileShareName string = fileShareName
+output fileShareMountPath string = useManagedFileShare ? managedFileShare!.properties.hostName : '${storage!.name}.file.${environment().suffixes.storage}'
 output postgresPrivateDnsZoneId string = enablePrivateEndpoints ? privateDnsZonePostgres.id : ''
 output acaSubnetId string = vnet.properties.subnets[2].id
